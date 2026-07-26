@@ -11,11 +11,34 @@ services:
       - .env
     environment:
       - TZ=UTC
-    # No ports needed — this is a background worker
-    # No volumes needed — stateless (reads APIs, writes DNS records)
+    volumes:
+      # Mount nginx config dir so the syncer can write proxy configs
+      - nginx-confd:/etc/nginx/conf.d:rw
     healthcheck:
       test: ["CMD", "python3", "-c", "from pathlib import Path; exit(0 if Path('/var/run/tailnet-dns-syncer.pid').exists() else 1)"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
+
+  # ── Optional nginx reverse proxy ──────────────────────────────
+  # Enable by setting NGINX_PROXY_ENABLED=true in .env (requires
+  # DEVICE_FILTER_TAG and NGINX_PUBLIC_IP to also be set).
+  # The syncer writes per-device .conf files into the shared volume
+  # and reloads nginx whenever the config changes.
+  nginx:
+    image: nginx:alpine
+    container_name: tailnet-nginx-proxy
+    restart: unless-stopped
+    profiles:
+      - proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - nginx-confd:/etc/nginx/conf.d:ro
+    depends_on:
+      - syncer
+
+volumes:
+  nginx-confd:
