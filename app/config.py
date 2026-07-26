@@ -5,7 +5,7 @@ from __future__ import annotations
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class Settings(BaseSettings, cli_never_set=True):
+class Settings(BaseSettings):
     # ── Tailscale ──────────────────────────────────────────────
     tailscale_api_key: str
     """Tailscale API access token (generated from https://login.tailscale.com/admin/settings/authkeys)."""
