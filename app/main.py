@@ -119,18 +119,20 @@ def sync_devices(
         else:
             logger.debug("Record %s → %s is up to date", host, ip)
 
-    # 5. Remove stale records (those that match our naming convention
-    #    but no longer correspond to a known device).
-    if settings.domain_suffix:
-        prefix = f".{settings.domain_suffix}"
-    else:
-        prefix = ""  # bare hostnames — risky, so only clean up known devices
-
+    # 5. Remove stale records — records that look like they were created by
+    #    this tool but no longer correspond to a known device.
     for host, record in a_map.items():
-        if host in desired:
+        if host in desired or host == "@":
             continue
-        # Only remove records that look like they were created by us
-        if settings.domain_suffix and not host.endswith(prefix):
+        # When domain_suffix is set, only remove records that end with it
+        if settings.domain_suffix:
+            expected = f".{settings.domain_suffix}"
+            if not host.endswith(expected):
+                continue
+        # Without domain_suffix we only remove bare single-label records
+        # (e.g. "nas") — these are unambiguous; anything with dots
+        # (like "www") was created manually and is left alone.
+        elif "." in host:
             continue
         logger.info("Stale device %s (no longer in tailnet), removing DNS record", host)
         if not settings.dry_run:

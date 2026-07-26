@@ -15,7 +15,7 @@ NETLIFY_API = "https://api.netlify.com/api/v1"
 @dataclass
 class DnsRecord:
     id: str
-    hostname: str
+    hostname: str  # bare / relative to the zone (e.g. "nas", not "nas.example.com")
     type: str
     value: str
     ttl: int
@@ -26,6 +26,7 @@ class NetlifyDnsClient:
 
     def __init__(self, token: str, zone_id: str) -> None:
         self.zone_id = zone_id
+        self._zone_domain: str | None = None
         self._client = httpx.Client(
             base_url=NETLIFY_API,
             headers={
@@ -37,9 +38,36 @@ class NetlifyDnsClient:
         )
 
     # ------------------------------------------------------------------
+    # Zone domain — fetched lazily so we can normalise hostnames
+    # ------------------------------------------------------------------
+
+    @property
+    def zone_domain(self) -> str:
+        if self._zone_domain is None:
+            resp = self._client.get(f"/dns_zones/{self.zone_id}")
+            resp.raise_for_status()
+            self._zone_domain = resp.json()["name"]
+            logger.debug("Zone domain: %s", self._zone_domain)
+        return self._zone_domain
+
+    def _rel_hostname(self, hostname: str) -> str:
+        """Strip the zone domain from a full hostname.
+
+        ``nas.694206969.xyz`` → ``nas``,  ``@`` → ``@`` (root).
+        """
+        domain = self.zone_domain
+        if hostname == domain:
+            return "@"
+        if hostname.endswith(f".{domain}"):
+            return hostname[: -len(f".{domain}")]
+        return hostname  # already bare
+
+    # ------------------------------------------------------------------
+    # Record operations
+    # ------------------------------------------------------------------
 
     def list_records(self) -> list[DnsRecord]:
-        """Return all DNS records in the zone."""
+        """Return all DNS records in the zone with *relative* hostnames."""
         resp = self._client.get(f"/dns_zones/{self.zone_id}/dns_records")
         resp.raise_for_status()
         raw = resp.json()
@@ -48,7 +76,7 @@ class NetlifyDnsClient:
             out.append(
                 DnsRecord(
                     id=r["id"],
-                    hostname=r["hostname"],
+                    hostname=self._rel_hostname(r["hostname"]),
                     type=r["type"],
                     value=r["value"],
                     ttl=r.get("ttl", 3600),
@@ -72,6 +100,22 @@ class NetlifyDnsClient:
         logger.info("Created A record %s → %s (TTL=%d)", hostname, ip, ttl)
         return resp.json()
 
+    def update_a_record(self, record_id: str, hostname: str, ip: str, ttl: int = 300) -> dict:
+        """Update an existing A record in-place via PUT."""
+        payload = {
+            "type": "A",
+            "hostname": hostname,
+            "value": ip,
+            "ttl": ttl,
+        }
+        resp = self._client.put(
+            f"/dns_zones/{self.zone_id}/dns_records/{record_id}",
+            json=payload,
+        )
+        resp.raise_for_status()
+        logger.info("Updated A record %s → %s (TTL=%d)", hostname, ip, ttl)
+        return resp.json()
+
     def delete_record(self, record_id: str) -> None:
         """Remove a DNS record by its ID."""
         resp = self._client.delete(
@@ -79,10 +123,3 @@ class NetlifyDnsClient:
         )
         resp.raise_for_status()
         logger.info("Deleted DNS record %s", record_id)
-
-    def update_a_record(self, record_id: str, hostname: str, ip: str, ttl: int = 300) -> dict:
-        """Replace an existing A record's value.  Netlify treats this as
-        delete + create under the hood (PUT is not available), so we
-        simplify by calling delete_record then create_a_record."""
-        self.delete_record(record_id)
-        return self.create_a_record(hostname, ip, ttl)
