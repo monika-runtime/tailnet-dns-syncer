@@ -1,0 +1,21 @@
+version: "3.8"
+
+services:
+  syncer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tailnet-dns-syncer
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - TZ=UTC
+    # No ports needed — this is a background worker
+    # No volumes needed — stateless (reads APIs, writes DNS records)
+    healthcheck:
+      test: ["CMD", "python3", "-c", "from pathlib import Path; exit(0 if Path('/var/run/tailnet-dns-syncer.pid').exists() else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
